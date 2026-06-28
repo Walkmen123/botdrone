@@ -1332,20 +1332,33 @@ async def cmd_help(message: Message, state: FSMContext):
     lang = data.get("lang", get_lang(message))
     await message.answer(t(lang, "help"), parse_mode="Markdown")
 
-@dp.message(F.location)
+@dp.message(F.location | F.content_type.in_({"location"}))
 async def handle_location(message: Message, state: FSMContext):
     data = await state.get_data()
     lang = data.get("lang", get_lang(message))
-
     lat = message.location.latitude
     lon = message.location.longitude
+    await process_location(message, state, lat, lon, lang)
 
+
+@dp.message(F.venue)
+async def handle_venue(message: Message, state: FSMContext):
+    """Handle map pin (venue) — Telegram sends these when user shares a place."""
+    data = await state.get_data()
+    lang = data.get("lang", get_lang(message))
+    lat = message.venue.location.latitude
+    lon = message.venue.location.longitude
+    await process_location(message, state, lat, lon, lang)
+
+
+async def process_location(message: Message, state: FSMContext,
+                            lat: float, lon: float, lang: str):
+    """Core: fetch weather + zones + map for given coordinates."""
     checking_msg = await message.answer(
         t(lang, "checking"),
         reply_markup=ReplyKeyboardRemove()
     )
 
-    # Parallel requests
     weather, location_name, zones_result = await asyncio.gather(
         get_weather(lat, lon),
         get_location_name(lat, lon),
@@ -1353,7 +1366,6 @@ async def handle_location(message: Message, state: FSMContext):
         return_exceptions=True
     )
 
-    # Handle exceptions from gather
     if isinstance(zones_result, Exception):
         logger.error(f"Zones exception: {type(zones_result).__name__}: {zones_result}")
         zones_error = True
@@ -1468,42 +1480,36 @@ async def handle_text(message: Message, state: FSMContext):
     lang = data.get("lang", get_lang(message))
     text = message.text.strip()
 
-    # 1. "Enter address" button press — prompt for input
-    addr_btn_uk = "🔍 Ввести адресу"
-    addr_btn_en = "🔍 Enter address"
-    if text in (addr_btn_uk, addr_btn_en):
+    # 1. "Enter address" button — prompt for input
+    if text in ("🔍 Ввести адресу", "🔍 Enter address"):
         prompt = (
             "✏️ Введи назву міста або адресу:\n\n"
-            "_Приклади:_\n`Київ`\n`Amsterdam`\n`Хрещатик 1, Київ`\n`Dam 1, Amsterdam`"
+            "_Приклади:_\n`Київ` · `Киев` · `Kyiv`\n`Amsterdam`\n`Хрещатик 1, Київ`"
             if lang == "uk" else
             "✏️ Type a city name or address:\n\n"
-            "_Examples:_\n`Amsterdam`\n`Kyiv`\n`Dam 1, Amsterdam`\n`Khreschatyk 1, Kyiv`"
+            "_Examples:_\n`Amsterdam` · `Kyiv`\n`Dam 1, Amsterdam`"
         )
         await message.answer(prompt, parse_mode="Markdown")
         await state.set_state(LocationState.waiting_for_location)
         return
 
-    # 2. Try parsing as coordinates "lat, lon"
+    # 2. Skip commands
+    if text.startswith("/"):
+        return
+
+    # 3. Try parsing as coordinates "lat, lon"
     try:
         parts = text.replace(",", " ").split()
         if len(parts) == 2:
-            lat = float(parts[0])
-            lon = float(parts[1])
-            if -90 <= lat <= 90 and -180 <= lon <= 180:
-                class FakeLoc:
-                    latitude = lat
-                    longitude = lon
-                message.location = FakeLoc()
-                await handle_location(message, state)
+            lat_try = float(parts[0])
+            lon_try = float(parts[1])
+            if -90 <= lat_try <= 90 and -180 <= lon_try <= 180:
+                await process_location(message, state, lat_try, lon_try, lang)
                 return
     except ValueError:
         pass
 
-    # 3. Skip commands
-    if text.startswith("/"):
-        return
-
-    # 4. Geocode as city/address
+    # 4. Geocode as city / address (supports Cyrillic, any language)
     geo_msg = await message.answer(
         "🔍 Шукаю місце..." if lang == "uk" else "🔍 Looking up location..."
     )
@@ -1512,21 +1518,16 @@ async def handle_text(message: Message, state: FSMContext):
 
     if not result:
         await message.answer(
-            "❌ Не знайшов таке місце.\n\nСпробуй інакше:\n`Київ` або `52.37, 4.89`"
+            "❌ Не знайшов таке місце.\n\nСпробуй:\n`Київ` · `Kyiv` · `52.37, 4.89`"
             if lang == "uk" else
-            "❌ Location not found.\n\nTry differently:\n`Amsterdam` or `52.37, 4.89`",
+            "❌ Location not found.\n\nTry:\n`Amsterdam` · `Kyiv` · `52.37, 4.89`",
             parse_mode="Markdown",
             reply_markup=build_reply_keyboard(lang)
         )
         return
 
     lat, lon, _ = result
-
-    class FakeLoc:
-        latitude = lat
-        longitude = lon
-    message.location = FakeLoc()
-    await handle_location(message, state)
+    await process_location(message, state, lat, lon, lang)
 
 # ── MAIN ───────────────────────────────────────────────────────────────────────
 async def main():
