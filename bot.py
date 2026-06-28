@@ -1193,67 +1193,113 @@ def build_report(lang: str, location_name: str, weather: dict,
 
 
 def build_forecast_message(lang: str, days: list, location_name: str) -> str:
-    """Format 7-day forecast as readable message."""
-    DAYS_UK = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Нд"]
-    DAYS_EN = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-
-    lines = [
-        t(lang, "forecast_title"),
-        f"📍 *{location_name}*",
-        "",
-    ]
+    """Format 7-day forecast — clean, visual, easy to read."""
+    DAYS_UK = ["Понеділок", "Вівторок", "Середа", "Четвер", "П'ятниця", "Субота", "Неділя"]
+    DAYS_EN = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    SHORT_UK = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Нд"]
+    SHORT_EN = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
     best_day = max(days, key=lambda d: d["score"])
 
+    def wind_label(spd, lang):
+        if spd <= 3:   return "штиль 😌" if lang == "uk" else "calm 😌"
+        if spd <= 6:   return "слабкий 👍" if lang == "uk" else "light 👍"
+        if spd <= 10:  return "помірний ⚠️" if lang == "uk" else "moderate ⚠️"
+        if spd <= 14:  return "сильний ❌" if lang == "uk" else "strong ❌"
+        return "дуже сильний 🚫" if lang == "uk" else "very strong 🚫"
+
+    def score_bar(score):
+        filled = round(score / 10)
+        return "▓" * filled + "░" * (10 - filled)
+
+    uk = lang == "uk"
+    title = "📅 *Прогноз на 7 днів*" if uk else "📅 *7-Day Forecast*"
+    best_label = "🏆 Найкращий день" if uk else "🏆 Best day to fly"
+    tip_label = "💡 Порада" if uk else "💡 Tip"
+    tip_text = ("Літай вранці 6–9 год — вітер слабший, золоте світло."
+                if uk else
+                "Fly early 6–9 AM — calmer wind, golden light.")
+
+    lines = [
+        title,
+        f"📍 {location_name}",
+        "",
+    ]
+
     for day in days:
         dt = datetime.strptime(day["date"], "%Y-%m-%d")
-        dow = (DAYS_UK if lang == "uk" else DAYS_EN)[dt.weekday()]
+        short = (SHORT_UK if uk else SHORT_EN)[dt.weekday()]
         date_str = f"{dt.day:02d}.{dt.month:02d}"
-        emoji = score_emoji(day["score"])
-        is_best = "⭐️ " if day["date"] == best_day["date"] else ""
+        score = day["score"]
+        is_best = day["date"] == best_day["date"]
 
-        lines.append(
-            f"{is_best}*{dow} {date_str}* {emoji} {day['score']}/100\n"
-            f"  🌬 {day['wind']:.0f} м/с  💨 {day['gusts']:.0f} м/с  "
-            f"🌧 {day['precip']:.0f} мм  ☁️ {day['cloud']:.0f}%"
-        )
+        # Score color emoji
+        if score >= 85:   grade = "🟢"
+        elif score >= 65: grade = "🟡"
+        elif score >= 45: grade = "🟠"
+        else:             grade = "🔴"
 
-    lines.append("")
-    lines.append(
-        f"{t(lang, 'forecast_best')} "
-        f"*{datetime.strptime(best_day['date'], '%Y-%m-%d').strftime('%d.%m')}* "
-        f"— {best_day['score']}/100"
-    )
-    lines.append(t(lang, "forecast_tip"))
-    lines.append("")
-    lines.append(f"_{t(lang, 'footer')}_")
+        best_mark = " ⭐️" if is_best else ""
+        header = f"{grade} *{short} {date_str}*{best_mark} — *{score}/100*"
+        bar    = f"`{score_bar(score)}`"
+
+        rain_str = f"{day['precip']:.0f} мм" if day['precip'] > 0 else ("без опадів" if uk else "no rain")
+        wind_str = f"{day['wind']:.0f} м/с ({wind_label(day['wind'], lang)})"
+        gust_str = f"{day['gusts']:.0f} м/с"
+
+        lines += [
+            header,
+            bar,
+            f"  🌬 {('Вітер' if uk else 'Wind')}: {wind_str}",
+            f"  💨 {('Пориви' if uk else 'Gusts')}: {gust_str}   🌧 {rain_str}   ☁️ {day['cloud']:.0f}%",
+            "",
+        ]
+
+    best_dt = datetime.strptime(best_day["date"], "%Y-%m-%d")
+    best_short = (SHORT_UK if uk else SHORT_EN)[best_dt.weekday()]
+    best_date = f"{best_dt.day:02d}.{best_dt.month:02d}"
+
+    lines += [
+        f"──────────────",
+        f"{best_label}: *{best_short} {best_date}* — {best_day['score']}/100",
+        f"  🌬 {best_day['wind']:.0f} м/с   🌧 {best_day['precip']:.0f} мм   ☁️ {best_day['cloud']:.0f}%",
+        "",
+        f"_{tip_label}: {tip_text}_",
+        "",
+        f"_{t(lang, 'footer')}_",
+    ]
 
     return "\n".join(lines)
 
 
 def build_keyboard(lang: str, lat: float = None, lon: float = None) -> InlineKeyboardMarkup:
-    """Main keyboard with YouTube + forecast button."""
+    """Inline keyboard: forecast + new check buttons."""
     rows = []
     if lat is not None and lon is not None:
         rows.append([InlineKeyboardButton(
-            text=t(lang, "forecast_btn"),
+            text="📅 Прогноз 7 днів" if lang == "uk" else "📅 7-day Forecast",
             callback_data=f"forecast:{lat:.5f}:{lon:.5f}:{lang}"
         )])
-    rows.append([InlineKeyboardButton(
-        text=t(lang, "youtube_btn"),
-        url=YOUTUBE_CHANNEL
-    )])
+    rows.append([
+        InlineKeyboardButton(
+            text="🔄 Нова перевірка" if lang == "uk" else "🔄 New check",
+            callback_data=f"newcheck:{lang}"
+        ),
+        InlineKeyboardButton(
+            text="📹 YouTube",
+            url=YOUTUBE_CHANNEL
+        ),
+    ])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def build_reply_keyboard(lang: str) -> ReplyKeyboardMarkup:
+    share_btn = KeyboardButton(text="📍 Надіслати геолокацію" if lang == "uk" else "📍 Share my location", request_location=True)
+    search_btn = KeyboardButton(text="🔍 Ввести адресу" if lang == "uk" else "🔍 Enter address")
     return ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(
-            text=t(lang, "send_location"),
-            request_location=True
-        )]],
+        keyboard=[[share_btn], [search_btn]],
         resize_keyboard=True,
-        one_time_keyboard=True
+        one_time_keyboard=False
     )
 
 # ── HANDLERS ───────────────────────────────────────────────────────────────────
@@ -1364,9 +1410,24 @@ async def handle_location(message: Message, state: FSMContext):
 
     # Offer to check again
     await message.answer(
-        "🔄" if lang == "uk" else "🔄",
+        "👆 Обери дію нижче або надішли нове місце" if lang == "uk" else
+        "👆 Choose an action above or send a new location",
         reply_markup=build_reply_keyboard(lang)
     )
+
+@dp.callback_query(F.data.startswith("newcheck:"))
+async def handle_newcheck(callback: CallbackQuery, state: FSMContext):
+    """Handle 'New check' button — show location keyboard again."""
+    lang = callback.data.split(":")[1]
+    await callback.answer()
+    prompt = (
+        "Надішли нову геолокацію або введи адресу 👇"
+        if lang == "uk" else
+        "Send a new location or type an address 👇"
+    )
+    await callback.message.answer(prompt, reply_markup=build_reply_keyboard(lang))
+    await state.set_state(LocationState.waiting_for_location)
+
 
 @dp.callback_query(F.data.startswith("forecast:"))
 async def handle_forecast(callback: CallbackQuery):
@@ -1402,12 +1463,27 @@ async def handle_forecast(callback: CallbackQuery):
 
 @dp.message(F.text)
 async def handle_text(message: Message, state: FSMContext):
-    """Handle text: coordinates OR city/address name."""
+    """Handle text: address button / city name / coordinates."""
     data = await state.get_data()
     lang = data.get("lang", get_lang(message))
     text = message.text.strip()
 
-    # 1. Try parsing as coordinates "lat, lon"
+    # 1. "Enter address" button press — prompt for input
+    addr_btn_uk = "🔍 Ввести адресу"
+    addr_btn_en = "🔍 Enter address"
+    if text in (addr_btn_uk, addr_btn_en):
+        prompt = (
+            "✏️ Введи назву міста або адресу:\n\n"
+            "_Приклади:_\n`Київ`\n`Amsterdam`\n`Хрещатик 1, Київ`\n`Dam 1, Amsterdam`"
+            if lang == "uk" else
+            "✏️ Type a city name or address:\n\n"
+            "_Examples:_\n`Amsterdam`\n`Kyiv`\n`Dam 1, Amsterdam`\n`Khreschatyk 1, Kyiv`"
+        )
+        await message.answer(prompt, parse_mode="Markdown")
+        await state.set_state(LocationState.waiting_for_location)
+        return
+
+    # 2. Try parsing as coordinates "lat, lon"
     try:
         parts = text.replace(",", " ").split()
         if len(parts) == 2:
@@ -1423,26 +1499,29 @@ async def handle_text(message: Message, state: FSMContext):
     except ValueError:
         pass
 
-    # 2. Skip bot commands and keyboard buttons
-    if text.startswith("/") or text == t(lang, "send_location"):
-        await message.answer(t(lang, "ask_location"),
-                             reply_markup=build_reply_keyboard(lang))
+    # 3. Skip commands
+    if text.startswith("/"):
         return
 
-    # 3. Geocode as city/address
-    geo_msg = await message.answer(t(lang, "geocoding"))
+    # 4. Geocode as city/address
+    geo_msg = await message.answer(
+        "🔍 Шукаю місце..." if lang == "uk" else "🔍 Looking up location..."
+    )
     result = await geocode_city(text)
     await geo_msg.delete()
 
     if not result:
-        await message.answer(t(lang, "error_geocode"),
-                             parse_mode="Markdown",
-                             reply_markup=build_reply_keyboard(lang))
+        await message.answer(
+            "❌ Не знайшов таке місце.\n\nСпробуй інакше:\n`Київ` або `52.37, 4.89`"
+            if lang == "uk" else
+            "❌ Location not found.\n\nTry differently:\n`Amsterdam` or `52.37, 4.89`",
+            parse_mode="Markdown",
+            reply_markup=build_reply_keyboard(lang)
+        )
         return
 
-    lat, lon, location_name = result
+    lat, lon, _ = result
 
-    # Inject into handle_location flow
     class FakeLoc:
         latitude = lat
         longitude = lon
